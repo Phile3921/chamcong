@@ -211,6 +211,7 @@ function persist(){
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
   clearTimeout(saveTimer);
   saveTimer=setTimeout(pushDb,900);
+  if(GH){clearTimeout(ghTimer);ghTimer=setTimeout(()=>ghSync(),2500);}
 }
 async function pushDb(){
   if(!dbRef)return;
@@ -221,6 +222,59 @@ function adopt(o){
   S=o;S.settings=Object.assign(DEF().settings,S.settings);S.notes=S.notes||{};
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
 }
+/* ---------- đồng bộ qua GitHub Gist (chỉ bản chạy độc lập, không phải bản trong Claude) ---------- */
+const GH_KEY='chamcong-gh-v1',GH_DESC='cham-cong-ngoc-duy-data',GH_FILE='chamcong.json';
+let GH=null,ghTimer=null,ghBusy=false,ghText='',ghLast=0;
+try{GH=JSON.parse(localStorage.getItem(GH_KEY)||'null');}catch(e){}
+if(window.claude)GH=null;
+function ghSave(){try{if(GH)localStorage.setItem(GH_KEY,JSON.stringify(GH));else localStorage.removeItem(GH_KEY);}catch(e){}}
+function setGhMsg(t){ghText=t;const el=$('#ghmsg');if(el)el.textContent=t;}
+async function gh(path,opt){
+  const o=opt||{};
+  const r=await fetch('https://api.github.com'+path,{method:o.method||'GET',body:o.body,headers:Object.assign({'Authorization':'Bearer '+GH.token,'Accept':'application/vnd.github+json'},o.body?{'Content-Type':'application/json'}:{})});
+  if(r.status===401)throw new Error('auth');
+  if(!r.ok)throw new Error('http '+r.status);
+  return r.json();
+}
+async function ghFindOrCreate(){
+  const list=await gh('/gists?per_page=100');
+  const f=list.find(g=>g.description===GH_DESC&&g.files&&g.files[GH_FILE]);
+  if(f)return f.id;
+  const c=await gh('/gists',{method:'POST',body:JSON.stringify({description:GH_DESC,public:false,files:{[GH_FILE]:{content:JSON.stringify(S)}}})});
+  return c.id;
+}
+async function ghSync(){
+  if(!GH||ghBusy)return;
+  ghBusy=true;setGhMsg('Đang đồng bộ…');
+  try{
+    if(!GH.id){GH.id=await ghFindOrCreate();ghSave();}
+    const g=await gh('/gists/'+GH.id);
+    const file=g.files&&g.files[GH_FILE];
+    let remote=null;
+    if(file){
+      let txt=file.content;
+      if(file.truncated)txt=await (await fetch(file.raw_url)).text();
+      try{remote=JSON.parse(txt);}catch(e){}
+    }
+    const ru=(remote&&remote.updatedAt)||0,lu=S.updatedAt||0;
+    if(remote&&remote.days&&remote.settings&&ru>lu){
+      adopt(remote);setGhMsg('Đã tải dữ liệu mới từ GitHub.');
+      if(!(document.activeElement&&document.activeElement.tagName==='INPUT'))render();
+    }else if(lu>ru){
+      await gh('/gists/'+GH.id,{method:'PATCH',body:JSON.stringify({files:{[GH_FILE]:{content:JSON.stringify(S)}}})});
+      setGhMsg('Đã đẩy dữ liệu lên GitHub.');
+    }else setGhMsg('Dữ liệu đã khớp trên các máy.');
+    ghLast=Date.now();
+  }catch(e){
+    if(e.message==='auth'){setGhMsg('Mã truy cập sai hoặc đã hết hạn.');if(!GH.id){GH=null;ghSave();}}
+    else setGhMsg('Không đồng bộ được, kiểm tra mạng rồi thử lại.');
+  }
+  ghBusy=false;
+  if(view.tab==='set'){const t=ghText;render();setGhMsg(t);}
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&GH&&Date.now()-ghLast>30000)ghSync();});
+window.addEventListener('online',()=>{if(GH)ghSync();});
+
 function withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]);}
 async function initDb(){
   try{
@@ -328,6 +382,23 @@ function yearHTML(){
     '<div class="tablebox"><table><thead><tr><th>Tháng</th><th>Ngày đi làm</th><th>Ngày nghỉ</th><th>Giờ TC trong tháng</th><th>Ngày lương TC</th><th>Giờ TC chuyển tiếp</th><th>Lương cố định</th><th>Phụ cấp cơm</th><th>Tiền tăng ca</th><th>Tổng thực nhận</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
     '<div class="status">Tháng chưa nhập giờ nào sẽ để trống, giống bảng Excel gốc.</div>';
 }
+function ghCardHTML(){
+  if(window.claude)return '';
+  const steps='<details style="margin-top:6px"><summary style="cursor:pointer;font-size:13.5px;font-weight:600">Cách tạo mã truy cập GitHub</summary><ol class="rules" style="margin-top:8px">'+
+    '<li>Mở github.com, bấm ảnh đại diện góc trên phải, chọn <b>Settings</b>.</li>'+
+    '<li>Kéo xuống cuối cột trái, chọn <b>Developer settings</b>, rồi <b>Personal access tokens</b>, rồi <b>Tokens (classic)</b>.</li>'+
+    '<li>Bấm <b>Generate new token</b>, chọn <b>Generate new token (classic)</b>.</li>'+
+    '<li>Ô Note gõ <i>cham-cong</i>. Expiration chọn <b>No expiration</b>. Chỉ tick duy nhất ô <b>gist</b>.</li>'+
+    '<li>Kéo xuống bấm <b>Generate token</b>, chép chuỗi bắt đầu bằng <i>ghp_</i> và dán vào ô bên trên. Chuỗi này chỉ hiện một lần.</li>'+
+    '<li>Trên máy khác, dán đúng mã này, app tự tìm lại dữ liệu đã có.</li></ol></details>';
+  if(GH)return '<div class="card"><h3>Đồng bộ nhiều thiết bị</h3><div class="status"><b>Đã kết nối GitHub Gist.</b> Giờ làm tự đồng bộ khi bạn sửa và khi mở lại app.</div>'+
+    '<div class="bar" style="margin-top:6px"><button type="button" class="btn primary" data-act="ghsync">Đồng bộ ngay</button><button type="button" class="btn danger" data-act="ghoff" id="ghoffbtn">Ngắt kết nối</button></div>'+
+    '<div id="ghmsg" class="status" role="status">'+esc(ghText)+'</div></div>';
+  return '<div class="card"><h3>Đồng bộ nhiều thiết bị</h3><div class="status">Chưa kết nối. Dán mã truy cập GitHub để dùng chung dữ liệu giữa iPhone, Android và máy tính.</div>'+
+    '<div class="field"><label for="gh-token">Mã truy cập GitHub (quyền gist)</label><input id="gh-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghp_..." style="font-size:15px"></div>'+
+    '<div class="bar"><button type="button" class="btn primary" data-act="ghconnect">Kết nối và đồng bộ</button></div>'+
+    '<div id="ghmsg" class="status" role="status">'+esc(ghText)+'</div>'+steps+'</div>';
+}
 function setHTML(){
   const s=S.settings;
   const f=(id,label,val,small,extra)=>'<div class="field"><label for="'+id+'">'+label+'</label><input id="'+id+'" type="number" inputmode="decimal" step="any" value="'+val+'" '+(extra||'')+'>'+(small?'<small>'+small+'</small>':'')+'</div>';
@@ -339,6 +410,7 @@ function setHTML(){
     f('s-start','Năm bắt đầu chấm công',s.startYear,'Giờ tăng ca tính cộng dồn từ tháng 1 của năm này.')+
     f('s-open','Giờ tăng ca chuyển từ tháng 12 năm trước',s.opening,'Chỉ nhập một lần, các tháng sau tự chuyển tiếp.')+
     '<div class="field"><label for="s-deduct">Trừ phụ cấp cơm khi nghỉ?</label><select id="s-deduct"><option value="0"'+(s.deductMeal?'':' selected')+'>Không</option><option value="1"'+(s.deductMeal?' selected':'')+'>Có, trừ theo ngày nghỉ</option></select></div></div>'+
+    ghCardHTML()+
     '<div class="card"><h3>Sao lưu dữ liệu</h3><div class="status">'+st+'</div>'+
     '<div class="bar" style="margin-top:6px"><button type="button" class="btn primary" data-act="export">Lưu file sao lưu</button>'+
     '<label class="btn" for="importfile" style="display:inline-block">Khôi phục từ file</label><input id="importfile" type="file" accept=".json,application/json" hidden>'+
@@ -426,6 +498,10 @@ document.addEventListener('click',e=>{
     persist();const top=window.scrollY;render();window.scrollTo(0,top);return;
   }
   if(act==='clear'){armConfirm(b,'',()=>{const n=dim(view.y,view.m);for(let d=1;d<=n;d++){const k=key(view.y,view.m,d);delete S.days[k];delete S.notes[k];}persist();render();});return;}
+  if(act==='ghconnect'){const t=($('#gh-token').value||'').trim();if(!t){setGhMsg('Hãy dán mã truy cập vào ô trên.');return;}
+    GH={token:t};ghSave();ghSync();return;}
+  if(act==='ghsync'){ghSync();return;}
+  if(act==='ghoff'){armConfirm(b,'',()=>{GH=null;ghSave();ghText='Đã ngắt kết nối. Dữ liệu trên GitHub vẫn còn.';render();});return;}
   if(act==='export'){doExport();return;}
   if(act==='reseed'){armConfirm(b,'',()=>{S.days=Object.assign({},SEED);S.notes={};persist();$('#msg').textContent='Đã nạp lại số giờ từ bảng Excel gốc.';delete b.dataset.armed;b.textContent='Nạp lại dữ liệu Excel gốc';});return;}
 });
@@ -472,6 +548,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.classList.c
 render();
 if(fromSeed){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 initDb();
+if(GH)ghSync();
 </script>
 <script>if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('sw.js').catch(function(){});}</script>
 </body>
