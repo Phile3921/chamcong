@@ -57,6 +57,9 @@ button{cursor:pointer}
 .nav{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px}
 .nav button{border:0;background:transparent;width:38px;height:38px;border-radius:9px;font-size:20px;line-height:1;color:var(--ink)}
 .nav button:hover{background:var(--surface2)}
+.nav button:disabled{opacity:.3;cursor:default}
+.hero .sub{font-size:13px;color:var(--muted)}
+.tagk{color:var(--accent);font-weight:600}
 .nav .cur{flex:1;text-align:center;font-weight:600;font-size:16px}
 .nav .cur small{display:block;font-weight:400;font-size:11px;color:var(--muted);letter-spacing:.04em}
 
@@ -149,22 +152,6 @@ textarea.copybox{width:100%;height:110px;border:1px solid var(--line);border-rad
 const dim=(y,m)=>new Date(y,m,0).getDate();
 const key=(y,m,d)=>y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
 const r2=x=>Math.round(x*100)/100;
-function calcMonth(S,y,m,carryIn){
-  const st=S.settings,n=dim(y,m),shift=st.shift>0?st.shift:12;
-  let worked=0,hours=0,ot=0;
-  for(let d=1;d<=n;d++){const h=Number(S.days[key(y,m,d)])||0;hours+=h;if(h>0)worked++;ot+=Math.max(0,h-shift);}
-  const off=n-worked,daily=st.salary/n;
-  const base=Math.round(daily*worked);
-  const meal=Math.round(st.meal-(st.deductMeal?st.meal/n*off:0));
-  ot=r2(ot);const cum=r2(ot+carryIn);const otDays=Math.floor(cum/shift);
-  const otPay=Math.round(otDays*daily);const carryOut=r2(cum-otDays*shift);
-  return {y,m,n,worked,off,hours,daily,base,meal,ot,carryIn,cum,otDays,otPay,carryOut,total:base+meal+otPay,entered:hours>0};
-}
-function calcAll(S,uptoYear){
-  const out={};let carry=Number(S.settings.opening)||0;
-  for(let y=S.settings.startYear;y<=uptoYear;y++)for(let m=1;m<=12;m++){const r=calcMonth(S,y,m,carry);out[y+'-'+m]=r;carry=r.carryOut;}
-  return out;
-}
 /* Âm lịch Việt Nam (thuật toán Hồ Ngọc Đức, múi giờ +7) */
 const PI=Math.PI,TZ=7;
 function jdFromDate(dd,mm,yy){const a=Math.floor((14-mm)/12),y=yy+4800-a,m=mm+12*a-3;let jd=dd+Math.floor((153*m+2)/5)+365*y+Math.floor(y/4)-Math.floor(y/100)+Math.floor(y/400)-32045;if(jd<2299161)jd=dd+Math.floor((153*m+2)/5)+365*y+Math.floor(y/4)-32083;return jd;}
@@ -184,6 +171,39 @@ function solar2lunar(dd,mm,yy){
   if(lm>12)lm-=12;if(lm>=11&&diff<4)ly-=1;
   return {d:ld,m:lm,y:ly,leap};
 }
+function jdToDate(jd){let a,b,c;if(jd>2299160){a=jd+32044;b=Math.floor((4*a+3)/146097);c=a-Math.floor(b*146097/4);}else{b=0;c=jd+32082;}const d=Math.floor((4*c+3)/1461),e=c-Math.floor(1461*d/4),m=Math.floor((5*e+2)/153);return {d:e-Math.floor((153*m+2)/5)+1,m:m+3-12*Math.floor(m/10),y:b*100+d-4800+Math.floor(m/10)};}
+const kOfJd=jd=>Math.floor((jd-2415021.076998695)/29.530588853);
+/* Kỳ lương: từ ngày âm lịch `cut` của một tháng âm đến trước ngày `cut` của tháng âm kế tiếp. k = số thứ tự tháng âm (theo trăng non). */
+function periodInfo(k,cut){
+  const ms=nmDay(k),me=nmDay(k+1),start=ms+cut-1,end=me+cut-1;
+  const m1=jdToDate(ms),lu=solar2lunar(m1.d,m1.m,m1.y);
+  return {k,start,end,n:end-start,sd:jdToDate(start),ed:jdToDate(end-1),lm:lu.m,leap:lu.leap,ly:lu.y};
+}
+function periodOfJd(jd,cut){const k=kOfJd(jd);for(let i=-2;i<=2;i++){const p=periodInfo(k+i,cut);if(jd>=p.start&&jd<p.end)return p;}return periodInfo(k,cut);}
+function lunarYearFirstK(Y,cut){
+  const k0=kOfJd(jdFromDate(1,2,Y));
+  for(let k=k0-3;k<=k0+3;k++){const m1=jdToDate(nmDay(k)),lu=solar2lunar(m1.d,m1.m,m1.y);if(lu.y===Y&&lu.m===1&&!lu.leap)return k;}
+  return k0;
+}
+function yearPeriods(Y,cut){const k0=lunarYearFirstK(Y,cut),out=[];for(let k=k0;k<k0+14;k++){const p=periodInfo(k,cut);if(p.ly!==Y)break;out.push(p);}return out;}
+const dayKey=jd=>{const x=jdToDate(jd);return key(x.y,x.m,x.d);};
+function calcPeriod(S,p,carryIn){
+  const st=S.settings,n=p.n,shift=st.shift>0?st.shift:12;
+  let worked=0,hours=0,ot=0;
+  for(let jd=p.start;jd<p.end;jd++){const h=Number(S.days[dayKey(jd)])||0;hours+=h;if(h>0)worked++;ot+=Math.max(0,h-shift);}
+  const off=n-worked,daily=st.salary/n;
+  const base=Math.round(daily*worked);
+  const meal=Math.round(st.meal-(st.deductMeal?st.meal/n*off:0));
+  ot=r2(ot);const cum=r2(ot+carryIn);const otDays=Math.floor(cum/shift);
+  const otPay=Math.round(otDays*daily);const carryOut=r2(cum-otDays*shift);
+  return Object.assign({},p,{worked,off,hours,daily,base,meal,ot,carryIn,cum,otDays,otPay,carryOut,total:base+meal+otPay,entered:hours>0});
+}
+function calcAll(S,uptoK){
+  const cut=S.settings.cutoff||24,out={};let carry=Number(S.settings.opening)||0;
+  const k0=lunarYearFirstK(S.settings.startYear,cut);
+  for(let k=k0;k<=Math.max(uptoK,k0);k++){const r=calcPeriod(S,periodInfo(k,cut),carry);out[k]=r;carry=r.carryOut;}
+  return out;
+}
 /*ENDCORE*/
 
 const SEED={"2026-11-01":0,"2026-11-02":12,"2026-11-03":12,"2026-11-04":12,"2026-11-05":12,"2026-11-06":12,"2026-11-07":12,"2026-11-08":12,"2026-11-09":12,"2026-11-10":12,"2026-11-11":12,"2026-11-12":12,"2026-11-13":12,"2026-11-14":12,"2026-11-15":12,"2026-11-16":12,"2026-11-17":12,"2026-11-18":12,"2026-11-19":12,"2026-11-20":12,"2026-11-21":12,"2026-11-22":12,"2026-11-23":12,"2026-11-24":12,"2026-11-25":12,"2026-11-26":12,"2026-11-27":12,"2026-11-28":12,"2026-11-29":12,"2026-11-30":12,"2026-12-01":12,"2026-12-02":12,"2026-12-03":12,"2026-12-04":12,"2026-12-05":12,"2026-12-06":12,"2026-12-07":12,"2026-12-08":12,"2026-12-09":12,"2026-12-10":12,"2026-12-11":12,"2026-12-12":12,"2026-12-13":12,"2026-12-14":12,"2026-12-15":12,"2026-12-16":12,"2026-12-17":12,"2026-12-18":12,"2026-12-19":12,"2026-12-20":12,"2026-12-21":12,"2026-12-22":12,"2026-12-23":12,"2026-12-24":12,"2026-12-25":12,"2026-12-26":12,"2026-12-27":12,"2026-12-28":12,"2026-12-29":12,"2026-12-30":12,"2026-12-31":12};
@@ -194,15 +214,22 @@ const hfmt=n=>String(r2(n)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $=s=>document.querySelector(s);
 
-const DEF=()=>({settings:{salary:10000000,meal:1500000,shift:12,startYear:2026,deductMeal:false,opening:0},days:{},notes:{},updatedAt:0});
+const DEF=()=>({settings:{salary:10000000,meal:1500000,shift:12,startYear:2026,deductMeal:false,opening:0,cutoff:24},days:{},notes:{},updatedAt:0});
 let S=null,fromSeed=false;
 try{const raw=localStorage.getItem(KEY);if(raw)S=JSON.parse(raw);}catch(e){}
 if(!S||!S.settings||!S.days){S=DEF();S.days=Object.assign({},SEED);fromSeed=true;}
 S.settings=Object.assign(DEF().settings,S.settings);S.notes=S.notes||{};
 
-const now=new Date();
-let view={tab:'log',y:Math.max(S.settings.startYear,now.getFullYear()),m:now.getFullYear()>=S.settings.startYear?now.getMonth()+1:1,noteOpen:null};
-if(now.getFullYear()<S.settings.startYear){view.y=S.settings.startYear;view.m=1;}
+const todayJd=()=>{const t=new Date();return jdFromDate(t.getDate(),t.getMonth()+1,t.getFullYear());};
+const kMin=()=>lunarYearFirstK(S.settings.startYear,S.settings.cutoff);
+let view={tab:'log',k:0,ly:0,noteOpen:null};
+function gotoK(k){view.k=Math.max(k,kMin());view.ly=periodInfo(view.k,S.settings.cutoff).ly;}
+gotoK(periodOfJd(todayJd(),S.settings.cutoff).k);
+const fmtD=x=>x.d+'/'+x.m,fmtDY=x=>x.d+'/'+x.m+'/'+x.y;
+const rng=p=>fmtDY(p.sd)+' – '+fmtDY(p.ed);
+const plabel=p=>'tháng '+p.lm+(p.leap?' nhuận':'')+' âm';
+const CAN=['Canh','Tân','Nhâm','Quý','Giáp','Ất','Bính','Đinh','Mậu','Kỷ'],CHI=['Thân','Dậu','Tuất','Hợi','Tý','Sửu','Dần','Mão','Thìn','Tỵ','Ngọ','Mùi'];
+const canchi=y=>CAN[y%10]+' '+CHI[y%12];
 
 /* ---------- lưu trữ ---------- */
 let dbRef=null,dbState='local',saveTimer=null;
@@ -221,6 +248,7 @@ async function pushDb(){
 function adopt(o){
   S=o;S.settings=Object.assign(DEF().settings,S.settings);S.notes=S.notes||{};
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+  try{gotoK(view.k);}catch(e){}
 }
 /* ---------- đồng bộ qua GitHub Gist (chỉ bản chạy độc lập, không phải bản trong Claude) ---------- */
 const GH_KEY='chamcong-gh-v1',GH_DESC='cham-cong-ngoc-duy-data',GH_FILE='chamcong.json';
@@ -295,29 +323,31 @@ async function initDb(){
 }
 
 /* ---------- hiển thị ---------- */
-function monthData(){const all=calcAll(S,view.y);return all[view.y+'-'+view.m];}
+function periodData(){const all=calcAll(S,view.k);return all[view.k]||calcPeriod(S,periodInfo(view.k,S.settings.cutoff),0);}
 function heroHTML(r){
-  let blank=0;for(let d=1;d<=r.n;d++){const v=S.days[key(view.y,view.m,d)];if(v===undefined||v==='')blank++;}
-  return '<div class="lbl">Thực nhận tháng '+view.m+'/'+view.y+'</div>'+
+  let blank=0;for(let jd=r.start;jd<r.end;jd++){const v=S.days[dayKey(jd)];if(v===undefined||v==='')blank++;}
+  return '<div class="lbl">Thực nhận kỳ '+plabel(r)+'</div>'+
     '<div class="big">'+money(r.total)+'</div>'+
+    '<div class="sub num">'+rng(r)+' · '+r.n+' ngày</div>'+
     '<div class="stats"><div class="stat"><b>'+r.worked+'</b><span>ngày đi làm</span></div>'+
     '<div class="stat off"><b>'+r.off+'</b><span>ngày nghỉ</span></div>'+
     '<div class="stat ot"><b>'+hfmt(r.cum)+'h</b><span>tăng ca cộng dồn</span></div></div>'+
-    (r.entered&&blank?'<div class="hint">'+blank+' ngày chưa nhập đang tính là nghỉ, tổng lương chỉ đúng khi nhập đủ tháng.</div>':'');
+    (r.entered&&blank?'<div class="hint">'+blank+' ngày chưa nhập đang tính là nghỉ, tổng lương chỉ đúng khi nhập đủ kỳ.</div>':'');
 }
 function detailHTML(r){
   const kv=(a,b,sub)=>'<div class="kv"><span>'+a+(sub?'<small>'+sub+'</small>':'')+'</span><span>'+b+'</span></div>';
-  return '<h3>Chi tiết lương tháng '+view.m+'</h3>'+
-    kv('Số ngày trong tháng',r.n)+
+  return '<h3>Chi tiết lương kỳ '+plabel(r)+'</h3>'+
+    kv('Kỳ lương',rng(r),'từ '+S.settings.cutoff+' âm đến trước '+S.settings.cutoff+' âm tháng sau')+
+    kv('Số ngày trong kỳ',r.n)+
     kv('Lương 1 ngày',money(r.daily),'lương cố định ÷ '+r.n+' ngày')+
     kv('Lương cố định thực nhận',money(r.base),r.worked+' ngày đi làm')+
     kv('Phụ cấp cơm',money(r.meal),S.settings.deductMeal?'đã trừ '+r.off+' ngày nghỉ':'giữ nguyên')+
-    kv('Giờ tăng ca trong tháng',hfmt(r.ot)+'h')+
-    kv('Chuyển từ tháng trước',hfmt(r.carryIn)+'h')+
+    kv('Giờ tăng ca trong kỳ',hfmt(r.ot)+'h')+
+    kv('Chuyển từ kỳ trước',hfmt(r.carryIn)+'h')+
     kv('Tổng tăng ca cộng dồn',hfmt(r.cum)+'h')+
     kv('Ngày lương tăng ca',r.otDays+' ngày','mỗi '+S.settings.shift+'h = 1 ngày lương')+
     kv('Tiền tăng ca',money(r.otPay))+
-    kv('Chuyển sang tháng sau',hfmt(r.carryOut)+'h')+
+    kv('Chuyển sang kỳ sau',hfmt(r.carryOut)+'h')+
     '<div class="kv total"><span>TỔNG THỰC NHẬN</span><span>'+money(r.total)+'</span></div>';
 }
 function chipFor(h){
@@ -327,20 +357,18 @@ function chipFor(h){
   if(h===shift)return '<span class="chip ok">Đủ ca</span>';
   return '<span class="chip ok">Đi làm '+hfmt(h)+'h</span>';
 }
-function rowsHTML(){
-  const n=dim(view.y,view.m),td=new Date();
-  let out='';
-  for(let d=1;d<=n;d++){
-    const k=key(view.y,view.m,d),dt=new Date(view.y,view.m-1,d),wd=dt.getDay();
-    const v=S.days[k],lu=solar2lunar(d,view.m,view.y);
-    const isToday=td.getFullYear()===view.y&&td.getMonth()+1===view.m&&td.getDate()===d;
-    const lun=lu.d+'/'+lu.m+(lu.leap?' nhuận':'')+(lu.d===1?' ÂL':'');
-    const note=S.notes[k]||'';
+function rowsHTML(p){
+  const tdj=todayJd();let out='';
+  for(let jd=p.start;jd<p.end;jd++){
+    const x=jdToDate(jd),k=key(x.y,x.m,x.d),wd=new Date(x.y,x.m-1,x.d).getDay();
+    const v=S.days[k],lu=solar2lunar(x.d,x.m,x.y),isToday=jd===tdj,note=S.notes[k]||'';
+    const lun=lu.d+'/'+lu.m+(lu.leap?' nhuận':'');
+    const tag=jd===p.start?' <span class="tagk">đầu kỳ</span>':(jd===p.end-1?' <span class="tagk">cuối kỳ</span>':'');
     out+='<div class="row'+(wd===0?' sun':'')+(isToday?' today':'')+'" data-k="'+k+'">'+
-      '<div class="dnum">'+d+'</div>'+
-      '<button type="button" class="dmeta" data-act="note" aria-label="Ghi chú ngày '+d+'"><span class="w">'+WD[wd]+(isToday?' · hôm nay':'')+'</span><span class="l">âm '+lun+'</span>'+(note?'<span class="n">'+esc(note)+'</span>':'')+'</button>'+
+      '<div class="dnum">'+x.d+'</div>'+
+      '<button type="button" class="dmeta" data-act="note" aria-label="Ghi chú ngày '+fmtD(x)+'"><span class="w">'+WD[wd]+' · '+fmtD(x)+(isToday?' · hôm nay':'')+tag+'</span><span class="l">âm '+lun+'</span>'+(note?'<span class="n">'+esc(note)+'</span>':'')+'</button>'+
       '<div class="ctl"><button type="button" class="step" data-act="dec" aria-label="Giảm 1 giờ">−</button>'+
-      '<input class="hrs" type="number" inputmode="decimal" min="0" max="24" step="0.5" placeholder="nghỉ" value="'+(v===undefined||v===''?'':v)+'" aria-label="Số giờ làm ngày '+d+'">'+
+      '<input class="hrs" type="number" inputmode="decimal" min="0" max="24" step="0.5" placeholder="nghỉ" value="'+(v===undefined||v===''?'':v)+'" aria-label="Số giờ làm ngày '+fmtD(x)+'">'+
       '<button type="button" class="step" data-act="inc" aria-label="Tăng 1 giờ">+</button></div>'+
       '<span class="chipslot" style="grid-column:2 / 4">'+chipFor(Number(v)||0)+'</span>'+
       (view.noteOpen===k?'<div class="noteed"><input type="text" class="notein" id="note-'+k+'" placeholder="Ghi chú (ví dụ: nghỉ phép, trực đêm)" value="'+esc(note)+'" aria-label="Ghi chú"></div>':'')+
@@ -349,38 +377,41 @@ function rowsHTML(){
   return out;
 }
 function updateDerived(){
-  const r=monthData();
+  const r=periodData();
   const h=$('#hero');if(h)h.innerHTML=heroHTML(r);
   const dt=$('#detail');if(dt)dt.innerHTML=detailHTML(r);
 }
 function logHTML(){
-  const r=monthData();
-  return '<div class="nav"><button type="button" data-act="prev" aria-label="Tháng trước">‹</button>'+
-    '<div class="cur">Tháng '+view.m+'/'+view.y+'<small>'+WD[new Date(view.y,view.m-1,1).getDay()]+' là ngày mùng 1 dương lịch</small></div>'+
-    '<button type="button" data-act="next" aria-label="Tháng sau">›</button></div>'+
+  const r=periodData();
+  return '<div class="nav"><button type="button" data-act="prev" aria-label="Kỳ trước"'+(view.k<=kMin()?' disabled':'')+'>‹</button>'+
+    '<div class="cur">Kỳ '+plabel(r)+' '+r.ly+'<small>'+rng(r)+'</small></div>'+
+    '<button type="button" data-act="next" aria-label="Kỳ sau">›</button></div>'+
     '<div class="hero" id="hero">'+heroHTML(r)+'</div>'+
     '<div class="bar"><button type="button" class="btn primary" data-act="fill">Điền '+S.settings.shift+'h các ngày chưa nhập</button>'+
     '<button type="button" class="btn" data-act="today">Về hôm nay</button>'+
-    '<button type="button" class="btn danger" data-act="clear" id="clearbtn">Xóa tháng này</button></div>'+
-    '<div class="list" id="list">'+rowsHTML()+'</div>'+
+    '<button type="button" class="btn danger" data-act="clear" id="clearbtn">Xóa kỳ này</button></div>'+
+    '<div class="list" id="list">'+rowsHTML(r)+'</div>'+
     '<div class="card" id="detail">'+detailHTML(r)+'</div>';
 }
 function yearHTML(){
-  const all=calcAll(S,view.y);let rows='';
+  const cut=S.settings.cutoff,ps=yearPeriods(view.ly,cut);
+  const all=ps.length?calcAll(S,ps[ps.length-1].k):{};
+  const curK=periodOfJd(todayJd(),cut).k;
+  let rows='';
   const tot={worked:0,off:0,ot:0,otDays:0,base:0,meal:0,otPay:0,total:0};let last=null;
-  for(let m=1;m<=12;m++){
-    const r=all[view.y+'-'+m];
-    const cur=(view.y===now.getFullYear()&&m===now.getMonth()+1);
-    if(!r.entered){rows+='<tr class="'+(cur?'cur':'')+'"><td>Tháng '+m+'</td>'+'<td class="dim" colspan="9">chưa nhập</td></tr>';continue;}
+  const first=p=>'<td>T'+p.lm+(p.leap?' nhuận':'')+' âm<small style="display:block;font-weight:400;font-size:11px;color:var(--muted)">'+fmtD(p.sd)+' – '+fmtD(p.ed)+'/'+String(p.ed.y).slice(2)+'</small></td>';
+  ps.forEach(p=>{
+    const r=all[p.k],cur=p.k===curK;
+    if(!r||!r.entered){rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td class="dim" colspan="9">chưa nhập</td></tr>';return;}
     last=r;tot.worked+=r.worked;tot.off+=r.off;tot.ot+=r.ot;tot.otDays+=r.otDays;tot.base+=r.base;tot.meal+=r.meal;tot.otPay+=r.otPay;tot.total+=r.total;
-    rows+='<tr class="'+(cur?'cur':'')+'"><td>Tháng '+m+'</td><td>'+r.worked+'</td><td>'+r.off+'</td><td>'+hfmt(r.ot)+'</td><td>'+r.otDays+'</td><td>'+hfmt(r.carryOut)+'</td><td>'+r.base.toLocaleString('vi-VN')+'</td><td>'+r.meal.toLocaleString('vi-VN')+'</td><td>'+r.otPay.toLocaleString('vi-VN')+'</td><td>'+r.total.toLocaleString('vi-VN')+'</td></tr>';
-  }
+    rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td>'+r.worked+'</td><td>'+r.off+'</td><td>'+hfmt(r.ot)+'</td><td>'+r.otDays+'</td><td>'+hfmt(r.carryOut)+'</td><td>'+r.base.toLocaleString('vi-VN')+'</td><td>'+r.meal.toLocaleString('vi-VN')+'</td><td>'+r.otPay.toLocaleString('vi-VN')+'</td><td>'+r.total.toLocaleString('vi-VN')+'</td></tr>';
+  });
   rows+='<tr class="tot"><td>Cộng năm</td><td>'+tot.worked+'</td><td>'+tot.off+'</td><td>'+hfmt(tot.ot)+'</td><td>'+tot.otDays+'</td><td>'+hfmt(last?last.carryOut:0)+'</td><td>'+tot.base.toLocaleString('vi-VN')+'</td><td>'+tot.meal.toLocaleString('vi-VN')+'</td><td>'+tot.otPay.toLocaleString('vi-VN')+'</td><td>'+tot.total.toLocaleString('vi-VN')+'</td></tr>';
-  return '<div class="nav"><button type="button" data-act="pyear" aria-label="Năm trước">‹</button><div class="cur">Năm '+view.y+'<small>tổng hợp lương 12 tháng</small></div><button type="button" data-act="nyear" aria-label="Năm sau">›</button></div>'+
-    '<div class="hero"><div class="lbl">Tổng thực nhận năm '+view.y+'</div><div class="big">'+money(tot.total)+'</div>'+
+  return '<div class="nav"><button type="button" data-act="pyear" aria-label="Năm trước"'+(view.ly<=S.settings.startYear?' disabled':'')+'>‹</button><div class="cur">Năm âm lịch '+view.ly+'<small>'+canchi(view.ly)+' · '+ps.length+' kỳ lương</small></div><button type="button" data-act="nyear" aria-label="Năm sau">›</button></div>'+
+    '<div class="hero"><div class="lbl">Tổng thực nhận năm '+canchi(view.ly)+'</div><div class="big">'+money(tot.total)+'</div>'+
     '<div class="stats"><div class="stat"><b>'+tot.worked+'</b><span>ngày đi làm</span></div><div class="stat off"><b>'+tot.off+'</b><span>ngày nghỉ</span></div><div class="stat ot"><b>'+hfmt(last?last.carryOut:0)+'h</b><span>tăng ca còn dư</span></div></div></div>'+
-    '<div class="tablebox"><table><thead><tr><th>Tháng</th><th>Ngày đi làm</th><th>Ngày nghỉ</th><th>Giờ TC trong tháng</th><th>Ngày lương TC</th><th>Giờ TC chuyển tiếp</th><th>Lương cố định</th><th>Phụ cấp cơm</th><th>Tiền tăng ca</th><th>Tổng thực nhận</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-    '<div class="status">Tháng chưa nhập giờ nào sẽ để trống, giống bảng Excel gốc.</div>';
+    '<div class="tablebox"><table><thead><tr><th>Kỳ lương</th><th>Ngày đi làm</th><th>Ngày nghỉ</th><th>Giờ TC trong kỳ</th><th>Ngày lương TC</th><th>Giờ TC chuyển tiếp</th><th>Lương cố định</th><th>Phụ cấp cơm</th><th>Tiền tăng ca</th><th>Tổng thực nhận</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div class="status">Kỳ chưa nhập giờ nào sẽ để trống. Mỗi kỳ tính từ ngày '+cut+' âm lịch đến trước ngày '+cut+' âm lịch tháng sau.</div>';
 }
 function ghCardHTML(){
   if(window.claude)return '';
@@ -407,8 +438,9 @@ function setHTML(){
     f('s-salary','Lương cố định / tháng (₫)',s.salary,'Lương 1 ngày = lương cố định ÷ số ngày của tháng.')+
     f('s-meal','Phụ cấp cơm / tháng (₫)',s.meal)+
     f('s-shift','Số giờ của 1 ca',s.shift,'Làm vượt số giờ này là tăng ca.','min="1" max="24"')+
-    f('s-start','Năm bắt đầu chấm công',s.startYear,'Giờ tăng ca tính cộng dồn từ tháng 1 của năm này.')+
-    f('s-open','Giờ tăng ca chuyển từ tháng 12 năm trước',s.opening,'Chỉ nhập một lần, các tháng sau tự chuyển tiếp.')+
+    f('s-cut','Ngày âm lịch bắt đầu kỳ lương',s.cutoff,'Kỳ lương chạy từ ngày này của tháng âm đến trước ngày này của tháng âm kế tiếp.','min="1" max="29"')+
+    f('s-start','Năm âm lịch bắt đầu chấm công',s.startYear,'Giờ tăng ca cộng dồn từ kỳ tháng 1 âm của năm này.')+
+    f('s-open','Giờ tăng ca chuyển từ kỳ trước đó',s.opening,'Chỉ nhập một lần, các kỳ sau tự chuyển tiếp.')+
     '<div class="field"><label for="s-deduct">Trừ phụ cấp cơm khi nghỉ?</label><select id="s-deduct"><option value="0"'+(s.deductMeal?'':' selected')+'>Không</option><option value="1"'+(s.deductMeal?' selected':'')+'>Có, trừ theo ngày nghỉ</option></select></div></div>'+
     ghCardHTML()+
     '<div class="card"><h3>Sao lưu dữ liệu</h3><div class="status">'+st+'</div>'+
@@ -420,6 +452,7 @@ function setHTML(){
     '<li>Ngày có nhập số giờ lớn hơn 0 là đi làm. Ô trống hoặc 0 là nghỉ, trừ 1 ngày lương.</li>'+
     '<li>Giờ tăng ca mỗi ngày = số giờ làm trừ số giờ của 1 ca, không âm.</li>'+
     '<li>Giờ tăng ca cộng dồn kể cả số dư tháng trước. Đủ 1 ca là 1 ngày lương, cộng vào tổng thực nhận. Phần dư chuyển sang tháng sau.</li>'+
+    '<li>Kỳ lương tính từ ngày '+s.cutoff+' âm lịch tháng này đến trước ngày '+s.cutoff+' âm lịch tháng sau. Lương 1 ngày = lương cố định ÷ số ngày của kỳ (29 hoặc 30).</li>'+
     '<li>Lương tính theo ngày, không tính theo giờ. Tiền làm tròn đến đồng.</li></ol></div>';
 }
 function render(){
@@ -474,14 +507,13 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const act=b.dataset.act,row=b.closest('.row');
   if(act==='prev'||act==='next'){
-    let y=view.y,m=view.m+(act==='next'?1:-1);
-    if(m<1){m=12;y--;}if(m>12){m=1;y++;}
-    if(y<S.settings.startYear)return;
-    view.y=y;view.m=m;view.noteOpen=null;render();return;
+    const nk=view.k+(act==='next'?1:-1);
+    if(nk<kMin())return;
+    gotoK(nk);view.noteOpen=null;render();return;
   }
-  if(act==='pyear'){if(view.y>S.settings.startYear){view.y--;render();}return;}
-  if(act==='nyear'){view.y++;render();return;}
-  if(act==='today'){view.y=Math.max(S.settings.startYear,now.getFullYear());view.m=now.getFullYear()>=S.settings.startYear?now.getMonth()+1:1;render();
+  if(act==='pyear'){if(view.ly>S.settings.startYear){view.ly--;render();}return;}
+  if(act==='nyear'){view.ly++;render();return;}
+  if(act==='today'){gotoK(periodOfJd(todayJd(),S.settings.cutoff).k);view.noteOpen=null;render();
     const t=document.querySelector('.row.today');if(t)t.scrollIntoView({block:'center'});return;}
   if(act==='dec'||act==='inc'){
     const k=row.dataset.k,cur=S.days[k];let n;
@@ -492,12 +524,11 @@ document.addEventListener('click',e=>{
   if(act==='note'){const k=row.dataset.k;view.noteOpen=view.noteOpen===k?null:k;
     const top=window.scrollY;render();window.scrollTo(0,top);focusNote();return;}
   if(act==='fill'){
-    const n=dim(view.y,view.m),td=new Date();
-    const lim=(td.getFullYear()===view.y&&td.getMonth()+1===view.m)?td.getDate():n;
-    for(let d=1;d<=lim;d++){const k=key(view.y,view.m,d);if(S.days[k]===undefined||S.days[k]==='')S.days[k]=S.settings.shift;}
+    const p=periodInfo(view.k,S.settings.cutoff),lim=Math.min(p.end-1,todayJd());
+    for(let jd=p.start;jd<=lim;jd++){const k=dayKey(jd);if(S.days[k]===undefined||S.days[k]==='')S.days[k]=S.settings.shift;}
     persist();const top=window.scrollY;render();window.scrollTo(0,top);return;
   }
-  if(act==='clear'){armConfirm(b,'',()=>{const n=dim(view.y,view.m);for(let d=1;d<=n;d++){const k=key(view.y,view.m,d);delete S.days[k];delete S.notes[k];}persist();render();});return;}
+  if(act==='clear'){armConfirm(b,'',()=>{const p=periodInfo(view.k,S.settings.cutoff);for(let jd=p.start;jd<p.end;jd++){const k=dayKey(jd);delete S.days[k];delete S.notes[k];}persist();render();});return;}
   if(act==='ghconnect'){const t=($('#gh-token').value||'').trim();if(!t){setGhMsg('Hãy dán mã truy cập vào ô trên.');return;}
     GH={token:t};ghSave();ghSync();return;}
   if(act==='ghsync'){ghSync();return;}
@@ -517,13 +548,14 @@ document.addEventListener('input',e=>{
     if(t.value.trim())S.notes[k]=t.value;else delete S.notes[k];
     persist();return;
   }
-  const map={'s-salary':'salary','s-meal':'meal','s-shift':'shift','s-start':'startYear','s-open':'opening'};
+  const map={'s-salary':'salary','s-meal':'meal','s-shift':'shift','s-start':'startYear','s-open':'opening','s-cut':'cutoff'};
   if(map[t.id]){
     let n=parseFloat(t.value);if(isNaN(n))return;
     if(t.id==='s-shift'&&n<=0)return;
-    if(t.id==='s-start'&&(n<2000||n>2100))return;
+    if(t.id==='s-start'&&(n<2000||n>2100||n!==Math.round(n)))return;
+    if(t.id==='s-cut'&&(n<1||n>29||n!==Math.round(n)))return;
     S.settings[map[t.id]]=n;persist();
-    if(t.id==='s-start'&&view.y<n)view.y=n;
+    if(t.id==='s-start'||t.id==='s-cut')gotoK(view.k);
   }
 });
 document.addEventListener('change',e=>{
@@ -537,7 +569,7 @@ document.addEventListener('change',e=>{
         const o=JSON.parse(fr.result);
         if(!o||typeof o!=='object'||!o.days||!o.settings)throw new Error('bad');
         o.notes=o.notes||{};adopt(o);persist();
-        view.y=Math.max(S.settings.startYear,view.y);render();$('#msg').textContent='Đã khôi phục dữ liệu từ file.';
+        gotoK(view.k);render();$('#msg').textContent='Đã khôi phục dữ liệu từ file.';
       }catch(err){msg.textContent='File không đúng định dạng sao lưu của app này.';}
     };
     fr.readAsText(t.files[0]);t.value='';
