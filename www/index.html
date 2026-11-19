@@ -524,7 +524,7 @@ document.addEventListener('click',e=>{
   if(act==='note'){const k=row.dataset.k;view.noteOpen=view.noteOpen===k?null:k;
     const top=window.scrollY;render();window.scrollTo(0,top);focusNote();return;}
   if(act==='fill'){
-    const p=periodInfo(view.k,S.settings.cutoff),lim=Math.min(p.end-1,todayJd());
+    const p=periodInfo(view.k,S.settings.cutoff),lim=p.end-1;
     for(let jd=p.start;jd<=lim;jd++){const k=dayKey(jd);if(S.days[k]===undefined||S.days[k]==='')S.days[k]=S.settings.shift;}
     persist();const top=window.scrollY;render();window.scrollTo(0,top);return;
   }
