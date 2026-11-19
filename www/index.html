@@ -111,7 +111,7 @@ button{cursor:pointer}
 .kv.total span{color:var(--ink)!important;font-weight:600}
 
 .tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px}
-table{border-collapse:collapse;width:100%;min-width:760px;font-size:13px}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:13px}
 th,td{padding:9px 10px;text-align:right;white-space:nowrap;border-top:1px solid var(--line)}
 th{font-size:11.5px;color:var(--muted);font-weight:600;border-top:0;background:var(--surface2);white-space:normal;vertical-align:bottom}
 th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--surface);font-weight:600}
@@ -187,21 +187,23 @@ function lunarYearFirstK(Y,cut){
 }
 function yearPeriods(Y,cut){const k0=lunarYearFirstK(Y,cut),out=[];for(let k=k0;k<k0+14;k++){const p=periodInfo(k,cut);if(p.ly!==Y)break;out.push(p);}return out;}
 const dayKey=jd=>{const x=jdToDate(jd);return key(x.y,x.m,x.d);};
-function calcPeriod(S,p,carryIn){
+/* Tăng ca của kỳ nào được tính lương ngay trong kỳ đó, không cộng dồn sang kỳ sau.
+   Tiền tăng ca = giờ tăng ca ÷ số giờ 1 ca × lương 1 ngày (phần lẻ giờ vẫn được trả theo tỉ lệ). */
+function calcPeriod(S,p){
   const st=S.settings,n=p.n,shift=st.shift>0?st.shift:12;
   let worked=0,hours=0,ot=0;
   for(let jd=p.start;jd<p.end;jd++){const h=Number(S.days[dayKey(jd)])||0;hours+=h;if(h>0)worked++;ot+=Math.max(0,h-shift);}
   const off=n-worked,daily=st.salary/n;
   const base=Math.round(daily*worked);
   const meal=Math.round(st.meal-(st.deductMeal?st.meal/n*off:0));
-  ot=r2(ot);const cum=r2(ot+carryIn);const otDays=Math.floor(cum/shift);
-  const otPay=Math.round(otDays*daily);const carryOut=r2(cum-otDays*shift);
-  return Object.assign({},p,{worked,off,hours,daily,base,meal,ot,carryIn,cum,otDays,otPay,carryOut,total:base+meal+otPay,entered:hours>0});
+  ot=r2(ot);const otDays=r2(ot/shift);
+  const otPay=Math.round(ot/shift*daily);
+  return Object.assign({},p,{worked,off,hours,daily,base,meal,ot,otDays,otPay,total:base+meal+otPay,entered:hours>0});
 }
 function calcAll(S,uptoK){
-  const cut=S.settings.cutoff||24,out={};let carry=Number(S.settings.opening)||0;
+  const cut=S.settings.cutoff||24,out={};
   const k0=lunarYearFirstK(S.settings.startYear,cut);
-  for(let k=k0;k<=Math.max(uptoK,k0);k++){const r=calcPeriod(S,periodInfo(k,cut),carry);out[k]=r;carry=r.carryOut;}
+  for(let k=k0;k<=Math.max(uptoK,k0);k++){out[k]=calcPeriod(S,periodInfo(k,cut));}
   return out;
 }
 /*ENDCORE*/
@@ -214,7 +216,7 @@ const hfmt=n=>String(r2(n)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $=s=>document.querySelector(s);
 
-const DEF=()=>({settings:{salary:10000000,meal:1500000,shift:12,startYear:2026,deductMeal:false,opening:0,cutoff:24},days:{},notes:{},updatedAt:0});
+const DEF=()=>({settings:{salary:10000000,meal:1500000,shift:12,startYear:2026,deductMeal:false,cutoff:24},days:{},notes:{},updatedAt:0});
 let S=null,fromSeed=false;
 try{const raw=localStorage.getItem(KEY);if(raw)S=JSON.parse(raw);}catch(e){}
 if(!S||!S.settings||!S.days){S=DEF();S.days=Object.assign({},SEED);fromSeed=true;}
@@ -323,7 +325,7 @@ async function initDb(){
 }
 
 /* ---------- hiển thị ---------- */
-function periodData(){const all=calcAll(S,view.k);return all[view.k]||calcPeriod(S,periodInfo(view.k,S.settings.cutoff),0);}
+function periodData(){return calcPeriod(S,periodInfo(view.k,S.settings.cutoff));}
 function heroHTML(r){
   let blank=0;for(let jd=r.start;jd<r.end;jd++){const v=S.days[dayKey(jd)];if(v===undefined||v==='')blank++;}
   return '<div class="lbl">Thực nhận kỳ '+plabel(r)+'</div>'+
@@ -331,7 +333,7 @@ function heroHTML(r){
     '<div class="sub num">'+rng(r)+' · '+r.n+' ngày</div>'+
     '<div class="stats"><div class="stat"><b>'+r.worked+'</b><span>ngày đi làm</span></div>'+
     '<div class="stat off"><b>'+r.off+'</b><span>ngày nghỉ</span></div>'+
-    '<div class="stat ot"><b>'+hfmt(r.cum)+'h</b><span>tăng ca cộng dồn</span></div></div>'+
+    '<div class="stat ot"><b>'+hfmt(r.ot)+'h</b><span>tăng ca trong kỳ</span></div></div>'+
     (r.entered&&blank?'<div class="hint">'+blank+' ngày chưa nhập đang tính là nghỉ, tổng lương chỉ đúng khi nhập đủ kỳ.</div>':'');
 }
 function detailHTML(r){
@@ -342,12 +344,9 @@ function detailHTML(r){
     kv('Lương 1 ngày',money(r.daily),'lương cố định ÷ '+r.n+' ngày')+
     kv('Lương cố định thực nhận',money(r.base),r.worked+' ngày đi làm')+
     kv('Phụ cấp cơm',money(r.meal),S.settings.deductMeal?'đã trừ '+r.off+' ngày nghỉ':'giữ nguyên')+
-    kv('Giờ tăng ca trong kỳ',hfmt(r.ot)+'h')+
-    kv('Chuyển từ kỳ trước',hfmt(r.carryIn)+'h')+
-    kv('Tổng tăng ca cộng dồn',hfmt(r.cum)+'h')+
-    kv('Ngày lương tăng ca',r.otDays+' ngày','mỗi '+S.settings.shift+'h = 1 ngày lương')+
+    kv('Giờ tăng ca trong kỳ',hfmt(r.ot)+'h','tính lương ngay trong kỳ này')+
+    kv('Ngày lương tăng ca',hfmt(r.otDays)+' ngày','mỗi '+S.settings.shift+'h = 1 ngày lương')+
     kv('Tiền tăng ca',money(r.otPay))+
-    kv('Chuyển sang kỳ sau',hfmt(r.carryOut)+'h')+
     '<div class="kv total"><span>TỔNG THỰC NHẬN</span><span>'+money(r.total)+'</span></div>';
 }
 function chipFor(h){
@@ -398,19 +397,19 @@ function yearHTML(){
   const all=ps.length?calcAll(S,ps[ps.length-1].k):{};
   const curK=periodOfJd(todayJd(),cut).k;
   let rows='';
-  const tot={worked:0,off:0,ot:0,otDays:0,base:0,meal:0,otPay:0,total:0};let last=null;
+  const tot={worked:0,off:0,ot:0,otDays:0,base:0,meal:0,otPay:0,total:0};
   const first=p=>'<td>T'+p.lm+(p.leap?' nhuận':'')+' âm<small style="display:block;font-weight:400;font-size:11px;color:var(--muted)">'+fmtD(p.sd)+' – '+fmtD(p.ed)+'/'+String(p.ed.y).slice(2)+'</small></td>';
   ps.forEach(p=>{
     const r=all[p.k],cur=p.k===curK;
-    if(!r||!r.entered){rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td class="dim" colspan="9">chưa nhập</td></tr>';return;}
-    last=r;tot.worked+=r.worked;tot.off+=r.off;tot.ot+=r.ot;tot.otDays+=r.otDays;tot.base+=r.base;tot.meal+=r.meal;tot.otPay+=r.otPay;tot.total+=r.total;
-    rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td>'+r.worked+'</td><td>'+r.off+'</td><td>'+hfmt(r.ot)+'</td><td>'+r.otDays+'</td><td>'+hfmt(r.carryOut)+'</td><td>'+r.base.toLocaleString('vi-VN')+'</td><td>'+r.meal.toLocaleString('vi-VN')+'</td><td>'+r.otPay.toLocaleString('vi-VN')+'</td><td>'+r.total.toLocaleString('vi-VN')+'</td></tr>';
+    if(!r||!r.entered){rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td class="dim" colspan="8">chưa nhập</td></tr>';return;}
+    tot.worked+=r.worked;tot.off+=r.off;tot.ot+=r.ot;tot.otDays+=r.otDays;tot.base+=r.base;tot.meal+=r.meal;tot.otPay+=r.otPay;tot.total+=r.total;
+    rows+='<tr class="'+(cur?'cur':'')+'">'+first(p)+'<td>'+r.worked+'</td><td>'+r.off+'</td><td>'+hfmt(r.ot)+'</td><td>'+hfmt(r.otDays)+'</td><td>'+r.base.toLocaleString('vi-VN')+'</td><td>'+r.meal.toLocaleString('vi-VN')+'</td><td>'+r.otPay.toLocaleString('vi-VN')+'</td><td>'+r.total.toLocaleString('vi-VN')+'</td></tr>';
   });
-  rows+='<tr class="tot"><td>Cộng năm</td><td>'+tot.worked+'</td><td>'+tot.off+'</td><td>'+hfmt(tot.ot)+'</td><td>'+tot.otDays+'</td><td>'+hfmt(last?last.carryOut:0)+'</td><td>'+tot.base.toLocaleString('vi-VN')+'</td><td>'+tot.meal.toLocaleString('vi-VN')+'</td><td>'+tot.otPay.toLocaleString('vi-VN')+'</td><td>'+tot.total.toLocaleString('vi-VN')+'</td></tr>';
+  rows+='<tr class="tot"><td>Cộng năm</td><td>'+tot.worked+'</td><td>'+tot.off+'</td><td>'+hfmt(tot.ot)+'</td><td>'+hfmt(r2(tot.otDays))+'</td><td>'+tot.base.toLocaleString('vi-VN')+'</td><td>'+tot.meal.toLocaleString('vi-VN')+'</td><td>'+tot.otPay.toLocaleString('vi-VN')+'</td><td>'+tot.total.toLocaleString('vi-VN')+'</td></tr>';
   return '<div class="nav"><button type="button" data-act="pyear" aria-label="Năm trước"'+(view.ly<=S.settings.startYear?' disabled':'')+'>‹</button><div class="cur">Năm âm lịch '+view.ly+'<small>'+canchi(view.ly)+' · '+ps.length+' kỳ lương</small></div><button type="button" data-act="nyear" aria-label="Năm sau">›</button></div>'+
     '<div class="hero"><div class="lbl">Tổng thực nhận năm '+canchi(view.ly)+'</div><div class="big">'+money(tot.total)+'</div>'+
-    '<div class="stats"><div class="stat"><b>'+tot.worked+'</b><span>ngày đi làm</span></div><div class="stat off"><b>'+tot.off+'</b><span>ngày nghỉ</span></div><div class="stat ot"><b>'+hfmt(last?last.carryOut:0)+'h</b><span>tăng ca còn dư</span></div></div></div>'+
-    '<div class="tablebox"><table><thead><tr><th>Kỳ lương</th><th>Ngày đi làm</th><th>Ngày nghỉ</th><th>Giờ TC trong kỳ</th><th>Ngày lương TC</th><th>Giờ TC chuyển tiếp</th><th>Lương cố định</th><th>Phụ cấp cơm</th><th>Tiền tăng ca</th><th>Tổng thực nhận</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div class="stats"><div class="stat"><b>'+tot.worked+'</b><span>ngày đi làm</span></div><div class="stat off"><b>'+tot.off+'</b><span>ngày nghỉ</span></div><div class="stat ot"><b>'+hfmt(r2(tot.ot))+'h</b><span>giờ tăng ca</span></div></div></div>'+
+    '<div class="tablebox"><table><thead><tr><th>Kỳ lương</th><th>Ngày đi làm</th><th>Ngày nghỉ</th><th>Giờ TC trong kỳ</th><th>Ngày lương TC</th><th>Lương cố định</th><th>Phụ cấp cơm</th><th>Tiền tăng ca</th><th>Tổng thực nhận</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
     '<div class="status">Kỳ chưa nhập giờ nào sẽ để trống. Mỗi kỳ tính từ ngày '+cut+' âm lịch đến trước ngày '+cut+' âm lịch tháng sau.</div>';
 }
 function ghCardHTML(){
@@ -439,8 +438,7 @@ function setHTML(){
     f('s-meal','Phụ cấp cơm / tháng (₫)',s.meal)+
     f('s-shift','Số giờ của 1 ca',s.shift,'Làm vượt số giờ này là tăng ca.','min="1" max="24"')+
     f('s-cut','Ngày âm lịch bắt đầu kỳ lương',s.cutoff,'Kỳ lương chạy từ ngày này của tháng âm đến trước ngày này của tháng âm kế tiếp.','min="1" max="29"')+
-    f('s-start','Năm âm lịch bắt đầu chấm công',s.startYear,'Giờ tăng ca cộng dồn từ kỳ tháng 1 âm của năm này.')+
-    f('s-open','Giờ tăng ca chuyển từ kỳ trước đó',s.opening,'Chỉ nhập một lần, các kỳ sau tự chuyển tiếp.')+
+    f('s-start','Năm âm lịch bắt đầu chấm công',s.startYear,'Năm sớm nhất có thể xem lại trong app.')+
     '<div class="field"><label for="s-deduct">Trừ phụ cấp cơm khi nghỉ?</label><select id="s-deduct"><option value="0"'+(s.deductMeal?'':' selected')+'>Không</option><option value="1"'+(s.deductMeal?' selected':'')+'>Có, trừ theo ngày nghỉ</option></select></div></div>'+
     ghCardHTML()+
     '<div class="card"><h3>Sao lưu dữ liệu</h3><div class="status">'+st+'</div>'+
@@ -451,7 +449,7 @@ function setHTML(){
     '<div class="card"><h3>Cách tính</h3><ol class="rules">'+
     '<li>Ngày có nhập số giờ lớn hơn 0 là đi làm. Ô trống hoặc 0 là nghỉ, trừ 1 ngày lương.</li>'+
     '<li>Giờ tăng ca mỗi ngày = số giờ làm trừ số giờ của 1 ca, không âm.</li>'+
-    '<li>Giờ tăng ca cộng dồn kể cả số dư tháng trước. Đủ 1 ca là 1 ngày lương, cộng vào tổng thực nhận. Phần dư chuyển sang tháng sau.</li>'+
+    '<li>Tăng ca kỳ nào tính lương ngay kỳ đó, không cộng dồn sang kỳ sau. Mỗi '+s.shift+'h tăng ca = 1 ngày lương, phần lẻ giờ được tính theo tỉ lệ.</li>'+
     '<li>Kỳ lương tính từ ngày '+s.cutoff+' âm lịch tháng này đến trước ngày '+s.cutoff+' âm lịch tháng sau. Lương 1 ngày = lương cố định ÷ số ngày của kỳ (29 hoặc 30).</li>'+
     '<li>Lương tính theo ngày, không tính theo giờ. Tiền làm tròn đến đồng.</li></ol></div>';
 }
@@ -548,7 +546,7 @@ document.addEventListener('input',e=>{
     if(t.value.trim())S.notes[k]=t.value;else delete S.notes[k];
     persist();return;
   }
-  const map={'s-salary':'salary','s-meal':'meal','s-shift':'shift','s-start':'startYear','s-open':'opening','s-cut':'cutoff'};
+  const map={'s-salary':'salary','s-meal':'meal','s-shift':'shift','s-start':'startYear','s-cut':'cutoff'};
   if(map[t.id]){
     let n=parseFloat(t.value);if(isNaN(n))return;
     if(t.id==='s-shift'&&n<=0)return;
