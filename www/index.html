@@ -191,14 +191,15 @@ const dayKey=jd=>{const x=jdToDate(jd);return key(x.y,x.m,x.d);};
    Tiền tăng ca = giờ tăng ca ÷ số giờ 1 ca × lương 1 ngày (phần lẻ giờ vẫn được trả theo tỉ lệ). */
 function calcPeriod(S,p){
   const st=S.settings,n=p.n,shift=st.shift>0?st.shift:12;
-  let worked=0,hours=0,ot=0;
-  for(let jd=p.start;jd<p.end;jd++){const h=Number(S.days[dayKey(jd)])||0;hours+=h;if(h>0)worked++;ot+=Math.max(0,h-shift);}
-  const off=n-worked,daily=st.salary/n;
-  const base=Math.round(daily*worked);
+  let worked=0,hours=0,ot=0,paidH=0;
+  for(let jd=p.start;jd<p.end;jd++){const h=Number(S.days[dayKey(jd)])||0;hours+=h;if(h>0)worked++;paidH+=Math.min(h,shift);ot+=Math.max(0,h-shift);}
+  /* Lương cố định tính theo giờ trong ca: làm 11h trả 11/12 ngày lương, làm 1h trả 1/12 ngày lương. */
+  const off=n-worked,daily=st.salary/n,paidDays=r2(paidH/shift);
+  const base=Math.round(daily*paidH/shift);
   const meal=Math.round(st.meal-(st.deductMeal?st.meal/n*off:0));
   ot=r2(ot);const otDays=r2(ot/shift);
   const otPay=Math.round(ot/shift*daily);
-  return Object.assign({},p,{worked,off,hours,daily,base,meal,ot,otDays,otPay,total:base+meal+otPay,entered:hours>0});
+  return Object.assign({},p,{worked,off,hours,daily,paidDays,base,meal,ot,otDays,otPay,total:base+meal+otPay,entered:hours>0});
 }
 function calcAll(S,uptoK){
   const cut=S.settings.cutoff||24,out={};
@@ -342,7 +343,7 @@ function detailHTML(r){
     kv('Kỳ lương',rng(r),'từ '+S.settings.cutoff+' âm đến trước '+S.settings.cutoff+' âm tháng sau')+
     kv('Số ngày trong kỳ',r.n)+
     kv('Lương 1 ngày',money(r.daily),'lương cố định ÷ '+r.n+' ngày')+
-    kv('Lương cố định thực nhận',money(r.base),r.worked+' ngày đi làm')+
+    kv('Lương cố định thực nhận',money(r.base),r.worked+' ngày đi làm, tính '+hfmt(r.paidDays)+' ngày công theo giờ')+
     kv('Phụ cấp cơm',money(r.meal),S.settings.deductMeal?'đã trừ '+r.off+' ngày nghỉ':'giữ nguyên')+
     kv('Giờ tăng ca trong kỳ',hfmt(r.ot)+'h','tính lương ngay trong kỳ này')+
     kv('Ngày lương tăng ca',hfmt(r.otDays)+' ngày','mỗi '+S.settings.shift+'h = 1 ngày lương')+
@@ -447,11 +448,12 @@ function setHTML(){
     '<button type="button" class="btn danger" data-act="reseed" id="reseedbtn">Nạp lại dữ liệu Excel gốc</button></div>'+
     '<div id="msg" class="status" role="status"></div><div id="copyarea"></div></div>'+
     '<div class="card"><h3>Cách tính</h3><ol class="rules">'+
-    '<li>Ngày có nhập số giờ lớn hơn 0 là đi làm. Ô trống hoặc 0 là nghỉ, trừ 1 ngày lương.</li>'+
+    '<li>Ngày có nhập số giờ lớn hơn 0 là đi làm. Ô trống hoặc 0 là nghỉ, không có lương ngày đó.</li>'+
+    '<li>Làm chưa đủ ca thì tính lương theo giờ: làm 11h trả 11/'+s.shift+' ngày lương, làm 1h trả 1/'+s.shift+' ngày lương.</li>'+
     '<li>Giờ tăng ca mỗi ngày = số giờ làm trừ số giờ của 1 ca, không âm.</li>'+
     '<li>Tăng ca kỳ nào tính lương ngay kỳ đó, không cộng dồn sang kỳ sau. Mỗi '+s.shift+'h tăng ca = 1 ngày lương, phần lẻ giờ được tính theo tỉ lệ.</li>'+
     '<li>Kỳ lương tính từ ngày '+s.cutoff+' âm lịch tháng này đến trước ngày '+s.cutoff+' âm lịch tháng sau. Lương 1 ngày = lương cố định ÷ số ngày của kỳ (29 hoặc 30).</li>'+
-    '<li>Lương tính theo ngày, không tính theo giờ. Tiền làm tròn đến đồng.</li></ol></div>';
+    '<li>Tiền làm tròn đến đồng.</li></ol></div>';
 }
 function render(){
   document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===view.tab)));
